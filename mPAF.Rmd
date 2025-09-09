@@ -1,0 +1,161 @@
+
+```{r}
+
+
+mPAF <- function(data,outcome = "outcome.name",treat = "treat.name",
+                  mediators, baseline.conf = c("BaselineConf.name1","BaselineConf.name2",...),
+                  formula.ac,formula.am1c,formula.am1m2c,formula.m1,
+                  formula.m2,formula.y,formula.yac,
+                  MonteCarlo.time = 10^4){
+  
+  med.num <- length(mediators)
+  
+  #am0c_model <- glm(formula.ac,family=gaussian(),data=data)
+  am0c_model <- glm(formula.ac,family=binomial(link = "logit"),data=data)
+  am1c_model <- glm(formula.am1c,family=binomial(link = "logit"),data=data)
+  am2c_model <- glm(formula.am1m2c,family=binomial(link = "logit"),data=data)
+  
+  m1_model <- glm(formula.m1,family=gaussian(),data=data) 
+  m2_model <- glm(formula.m2,family=gaussian(),data=data)
+  
+  y_model <- glm(formula.y,family=binomial(link = "logit"),data=data)
+  #y_model <- glm(formula.y,family=gaussian(),data=data)
+  
+  yac_model <- glm(formula.yac,family=binomial(link = "logit"),data=data)
+  
+  # Second step
+  data_MC <- data[sample(1:nrow(data),MonteCarlo.time,replace =T),]
+  
+  #不用input的變數了,都是0
+  QQ <- function(j){
+    
+    data_0 <- data; data_0[,treat] <- 0
+
+    m_model <- get(paste0("m", j, "_model"))
+    
+    fMj_0 <- dnorm(data[,mediators[j]],mean=predict(m_model,data_0,type="response"),sd=sqrt(sum(m_model$residuals^2)/m_model$df.residual))
+    fMj_A <- dnorm(data[,mediators[j]],mean=predict(m_model,data,type="response"),sd=sqrt(sum(m_model$residuals^2)/m_model$df.residual))
+
+    w1 <- fMj_0/fMj_A
+  
+    comp10 <- predict(y_model,data,type="response")
+    
+    
+    #-------
+    data_MC_0 <- data_MC; data_MC_0[,treat] <- 0
+
+    amjc_model <- get(paste0("am", j, "c_model"))
+    amj1c_model <- get(paste0("am", j-1, "c_model"))
+    
+    fAMj1C_0 <- dbinom(0, size=1, predict(amj1c_model,data_MC_0,type="response"))
+  
+    fAMj1C_A <- dbinom(data_MC[,treat], size=1, predict(amj1c_model,data_MC,type="response") )
+ 
+    fAMjC_0 <- dbinom(0, size=1, predict(amjc_model,data_MC_0,type="response"))
+    #fAMjC_0 <- dnorm(data_MC_0[,mediators[j]],mean=predict(amjc_model,data_MC_0,type="response"),sd=sqrt(mean(amjc_model$residuals^2)))*
+     # dbinom(0, size=1, predict(amj1c_model,data_MC_0,type="response") )
+    
+    fAMjC_A <- dbinom(data_MC[,treat], size=1, predict(amjc_model,data_MC,type="response") )
+    #fAMjC_A <- dnorm(data_MC[,mediators[j]],mean=predict(amjc_model,data_MC,type="response"),sd=sqrt(mean(amjc_model$residuals^2)))*
+      #dbinom(data_MC[,treat], size=1, predict(amj1c_model,data_MC,type="response") )
+
+    w2 <- (fAMjC_0*fAMj1C_A)/(fAMjC_A*fAMj1C_0)
+    
+    comp1 <- predict(y_model,data_MC,type="response")
+    
+    #--
+    
+    data_MC_g <- data_MC
+   
+    # 根據 j 設定 treat 為 0
+    for (m in 1:length(mediators)) {
+      if (m == j) {
+        data_MC_g[, treat] <- 0
+      } else {
+        data_MC_g[, treat] <- data_MC[, treat]
+      }
+      
+      # 計算mediator的新值
+      data_MC_g[, mediators[m]] <- rnorm(nrow(data_MC), 
+                                         mean = predict(get(paste0("m", m, "_model")), data_MC_g, type = "response"), 
+                                         sd = sqrt(sum(get(paste0("m", m, "_model"))$residuals^2) / get(paste0("m", m, "_model"))$df.residual))
+    }
+    
+    data_MC_g[,treat] <- data_MC[, treat]
+    # 最後再計算 comp2
+    comp2 <- predict(y_model, data_MC_g, type="response")
+    
+    
+    rr <- mean( w1*(data[,outcome]-comp10)) + mean( w2*(comp1-comp2) + comp2)
+    rr1 <- mean( comp2)
+    rr2 <- mean( w1*(data[,outcome]) ) 
+    rr3 <-  mean( w2*(comp1))
+    
+    return(data.frame(Robust=rr,Gcomp=rr1,MW=rr2,AW=rr3))
+  }
+  
+   
+  Q0a <- QQ(1)
+  Qa0 <- QQ(2)
+  #Qaa  
+  Qaa <- sum(data[,outcome]==1)/length(data[,outcome])
+  
+  #Q00
+  data_Y0 <- data; data_Y0[,treat] <- 0
+  pred_Y0 <- predict(yac_model, data_Y0, type = "response")
+  Q00 <- mean(pred_Y0)
+  
+  DD <-  function(a){
+    
+    data_0 <- data; data_0[,treat] <- a
+
+    fAM2C_A <- dbinom(data[,treat], size=1, predict(am2c_model,data,type="response") )
+    w <-  (data[,treat]==a)/(fAM2C_A)
+    comp10 <- predict(y_model,data_0,type="response")
+    
+    #-------
+    data_MC_0 <- data_MC; data_MC_0[,treat] <- a
+ 
+    comp1 <- predict(y_model,data_MC_0,type="response")
+    
+    
+    rr <- mean( w*(data[,outcome]-comp10)) + mean(comp1)
+    rr1 <- mean(comp1)
+    rr2 <- mean( w*(data[,outcome]) ) 
+    
+    return(data.frame(Robust=rr,Gcomp=rr1,IPW=rr2))
+  }
+  
+  Q0aa <- DD(0)
+  
+  #PAF,PAF_M1,PAF_M2,PAF_AY
+  res1 <- data.frame( rbind((Qaa-Q00)/Qaa, (Qaa-Q0a)/Qaa, (Qaa-Qa0)/Qaa ) )
+  rownames(res1) <- c("PAF","PAF_M1","PAF_M2")
+  
+  res2 <- data.frame( rbind((Qaa-Q0aa)/Qaa))
+  rownames(res2) <- c("PAF_A->Y")
+  
+  return(list(
+  partial_paths = res1,
+  direct_path = res2
+))
+}
+
+
+ff_rev <- mPAF(data=boot_data,outcome = "Y",treat = "A",
+                        mediators=c("M1","M2"), 
+                        baseline.conf = c("C1","C2","C3"),
+                        formula.ac="A~C1+C2+C3",
+                        formula.am1c="A~M1+C1+C2+C3",
+                        formula.am1m2c="A~M2+M1+C1+C2+C3",
+                        formula.m1="M1~A+C1+C2+C3",
+                        formula.m2="M2~A+C1+C2+C3+M1",
+                        formula.y="Y~A+C1+C2+C3+M1+M2",
+                        formula.yac="Y~A+C1+C2+C3",
+                        MonteCarlo.time = 10^4)
+
+
+```
+
+
+
