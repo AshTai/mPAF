@@ -1,1 +1,3 @@
 # Robust Estimation of Population Attributable Fractions in the Presence of Multiple Ordered Mediators
+
+Population Attributable Fraction (PAF) is a key epidemiological measure used to quantify the contribution of risk factors to the overall disease burden. However, when an exposure affects an outcome through multiple ordered mediators, traditional PAF estimation methods face challenges in accurately identifying the impact of each mediating pathway. These challenges arise from mediator-outcome relationships, interactions among mediators, and the presence of potential confounders. In this study, we propose new measures, termed mPAFs, to quantify the fraction of disease attributable to a specific mediation pathway. 
